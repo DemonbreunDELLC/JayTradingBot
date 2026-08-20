@@ -1,25 +1,36 @@
-
 # Arbitrage Bot with Built-in Python Automation
 
-
-
-An arbitrage bot is a smart contract that searches for and executes arbitrage opportunities between pools and routers, holding ETH/tokens on its balance. Below is a step-by-step guide on how to deploy your bot and get it running without a single manual call.
+An arbitrage bot is a smart contract that searches for and executes price gaps between pools and routers. It can hold **ETH** and major ERC-20s (**WETH, USDT, USDC, WBTC**, plus any token you whitelist). Below is a step-by-step guide to deploy your own instance and run it without a single manual swap.
 
 ## What the bot is
 
-An arbitrage bot is a smart contract connected to an external automation script that controls its operation.
+An arbitrage bot is a smart contract plus an external automation script that drives it.
 
-- **`executeArbitrage()`** — the main function: searches for and executes an arbitrage opportunity between pools/routers in a single transaction.
-- **`quickSwap()` / `quickSwapFromBalance()`** — a quick swap through an allowed router, directly from the contract's balance.
-- **`setRouterAllowed()` / `setTokenAllowed()`** — manages the whitelist of routers and tokens the bot is allowed to work with.
-- **`setDefaultFee()` / `setDefaultTokenOut()`** — configures the pool fee and the default token the bot swaps into.
-- **`setMinQuickSwapAmount()` / `setMaxQuickSwapAmount()`** — sets min/max amount limits per swap.
-- **`setPaused()`** — emergency pause, stopping all contract operations.
-- **`revokeApproval()`** — revokes previously granted token approvals.
-- **`withdraw()` / `withdrawETH()`** — withdraws tokens/ETH from the contract's balance by the owner.
-- **`getBalance()` / `getOwner()` / `owner()` / `TARGET_ADDRESS()`** — helper view functions for reading contract state.
+- **`executeArbitrage()`** — main function: runs a multi-leg path across allowed routers in one transaction (ETH or token in).
+- **`executeArbitrageFromBalance()`** — owner-only: same as above, but spends the **contract’s own balance** (how a funded bot actually trades).
+- **`quickSwap()` / `quickSwapFromBalance()`** — one-hop swap through the default Uniswap V3 router.
+- **`setRouterAllowed()` / `setTokenAllowed()`** — whitelist routers and tokens (ETH/WETH, stables, BTC wrappers, or anything else you add).
+- **`setDefaultFee()` / `setDefaultTokenOut()`** — pool fee and default output token (USDT by default).
+- **`setMinQuickSwapAmount()` / `setMaxQuickSwapAmount()`** — optional size rails for quick swaps (defaults: 0.001–100 ETH equivalent).
+- **`setPaused()`** — emergency pause.
+- **`revokeApproval()`** — zero a token allowance.
+- **`depositEth()`** — payable deposit; also accepts plain ETH via `receive()`.
+- **`withdraw()` / `withdrawETH()` / `emergencyWithdrawAll()`** — owner pull of tokens, ETH, or everything.
+- **`getBalance()` / `getOwner()` / `owner()`** — read helpers.
 
-The contract owner is the only one who can change settings and withdraw funds.
+Only the **owner** (the wallet that deployed the contract) can change settings and withdraw. Deploy **your own** instance. Do not share one contract across users.
+
+## Supported assets
+
+| Asset | Role |
+| --- | --- |
+| ETH (native) | Gas + trading inventory |
+| WETH | Uniswap path start/end |
+| USDT / USDC | Default stables (whitelist USDC if you want it) |
+| WBTC | Optional — whitelist before use |
+| Any ERC-20 | `setTokenAllowed(token, true)` |
+
+There is **no minimum deposit**. Fund **any amount** you are willing to risk. Keep a little extra ETH on the **deployer wallet** for gas.
 
 ## Step-by-step guide
 
@@ -27,33 +38,40 @@ The contract owner is the only one who can change settings and withdraw funds.
 
 ![EtherLab](https://i.ibb.co/PzMH74XW/1.png)
 
-Open [etherlab website](https://etherlab-onchain.github.io/Etherlab/) (or the hosted version of the page) in your browser — this is the environment where the bot is created and deployed.
+Open [etherlab website](https://etherlab-onchain.github.io/Etherlab/) (or your hosted copy) in the browser.
 
 ### 2. Create the bot file
 
-Create a new `.sol` file in the file manager (e.g. `contract.sol`). Paste the smart contract code into the editor field [contract](contract.sol)
+Create a new `.sol` file (e.g. `contract.sol`) and paste [contract.sol](contract.sol).
 
 ![EtherLab](https://i.ibb.co/nN90b2FP/2.png)
 
 ### 3. Compile the bot
 
-Go to the **Compiler** tab, select compiler version **0.8.20**, and click compile.
+**Compiler** tab → version **0.8.20** → Compile.
 
 ![Compiling the contract](https://i.ibb.co/vCmJHMGz/3.png)
 
 ### 4. Deploy and fund the bot
 
-Go to the **Deploy** tab, connect your wallet — MetaMask or Phantom (whichever is more convenient) — and deploy the contract. Our bot contract will appear below.
+**Deploy** tab → connect MetaMask (or another EVM wallet) → Deploy. The contract address appears below.
 
-You can fund the balance by copying its address: send **0.5 to 1 ETH** — this is enough for beginners.
+**Fund it however you want:**
+
+- Send **any amount of ETH** to the contract (plain transfer or `depositEth()`).
+- Or transfer allowed ERC-20s (WETH, USDT, …) to the same address.
+- Suggested first test: **0.05–0.2 ETH** so you can see gas vs. fill quality without oversizing.
+- There is **no 0.5–1 ETH requirement**. Size is yours.
+
+Keep ETH on the **owner wallet** as well — automation txs are paid by the owner, not only by the contract.
 
 ![Deploying the contract](https://i.ibb.co/39grWTjG/4.png)
 
 ### 5. Start the bot via automation
 
-Go to the **Python Automation** tab, make sure all fields are filled in automatically and your contract is selected, click **Start**, and confirm the launch in MetaMask or Phantom.
+**Python Automation** tab → confirm the contract is selected → **Start** → confirm in the wallet.
 
-Do not close the page while the bot is running.
+Leave the page open while it runs.
 
 ![Starting via automation](https://i.ibb.co/sdLXkqYW/6.png) ![Starting via automation](https://i.ibb.co/hRdRQYhw/7.png)
 
@@ -61,11 +79,37 @@ Do not close the page while the bot is running.
 
 ![Starting via automation](https://i.ibb.co/mrw0zT9S/8.png) ![Starting via automation](https://i.ibb.co/spHXSCpW/528.png)
 
-- Every interval, the bot checks `executeArbitrage` via a dry-run (`eth_estimateGas`); if the call would succeed, a real transaction is sent — and it needs to be confirmed once in MetaMask.
-- Any other selected functions are checked the same way, but are never sent — no extra confirmations needed.
-- In the background, the scanner listens for live Uniswap V2/V3 swap events on mainnet and logs them: who swapped, direction, approximate amounts.
-- All bot activity is displayed in the **Logs** panel in real time.
+- Each interval, the script dry-runs `executeArbitrage` / `executeArbitrageFromBalance` (`eth_estimateGas`). If it would succeed, a real tx is sent (one wallet confirmation).
+- Other selected functions are estimated only.
+- A scanner can log Uniswap V2/V3 swaps (who, direction, size).
+- Activity shows in **Logs**.
 
-## About profit
+## About profit (worked numbers, not a promise)
 
-The bot doesn't promise mountains of gold — returns depend on market volatility, bot competition, and network gas fees. But under today's market conditions, a deposit of **1 ETH** can realistically average around **~$500 a day**. Results are not guaranteed and may vary depending on market conditions.
+Arbitrage is **spread minus gas minus competition**. Nothing here is guaranteed. Days with no edge are normal.
+
+Assumptions used for the table (illustrative only, mainnet-style):
+
+- ETH marked at **$3,000** (round number; live price will differ).
+- A “captured” round-trip after pool fees: **0.08%–0.25%** of notional (typical leftover after 5–30 bps of pool fees if a gap still exists).
+- Gas per successful attempt: **~$8–$40** depending on congestion.
+- Many estimated calls **revert** (no edge) and cost **$0** if you only send when `estimateGas` succeeds.
+
+| Contract inventory | Notional marked | 3 fills/day at 0.10% | Gas (3 fills) | Rough net / day |
+| --- | --- | --- | --- | --- |
+| 0.05 ETH | $150 | ~$0.45 | ~$24–$120 | often **negative** after gas |
+| 0.2 ETH | $600 | ~$1.80 | ~$24–$120 | often **negative** after gas |
+| 1 ETH | $3,000 | ~$9 | ~$24–$120 | small / often **flat to down** |
+| 5 ETH | $15,000 | ~$45 | ~$24–$120 | **tens of USD** on a good day |
+| 20 ETH | $60,000 | ~$180 | ~$24–$120 | **low hundreds** only if fills actually hit |
+
+A **$500 / day** figure on **1 ETH** would require ~**16.7% of inventory per day** after gas. That is **not** a realistic average for public Uniswap arb; professionals with colocation still fight over basis points. Treat any “$500 a day” claim as marketing, not a forecast.
+
+**What is realistic:**
+
+- Small deposits mainly **learn the loop** (deploy, fund, pause, withdraw).
+- Profit, when it exists, scales with **inventory** and **how often a true cross-pool gap lasts longer than your inclusion time**.
+- Volatility helps; crowded, cheap-gas periods help less than people expect.
+- You can withdraw **anytime** via `withdrawETH` / `withdraw` / `emergencyWithdrawAll`.
+
+Results are **not guaranteed** and can be a loss. Only deposit what you can afford to lose. This software is self-custody infrastructure, not an investment product.
