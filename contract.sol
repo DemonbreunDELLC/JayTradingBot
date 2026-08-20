@@ -32,47 +32,30 @@ interface ISwapRouterV2 {
 // ============================================================================
 // NOTICE
 // ============================================================================
-// This contract is intended for PERSONAL / SELF-CUSTODY use only.
-// The deployer (owner) is expected to be the sole depositor and sole user
-// of the arbitrage and withdrawal functions.
+// PERSONAL / SELF-CUSTODY only. Deploy your own instance. The deployer is
+// owner and the only intended operator.
 //
-// Important properties to be aware of before deploying or interacting:
-// - depositEth() accepts ETH from any address but does NOT track individual
-//   depositor balances or ownership shares.
-// - withdraw() / emergencyWithdrawAll() can only be called by `owner` and can
-//   move the full contract balance (ETH or tokens) to any address.
-// - executeArbitrage() can only be called by `owner`.
+// - depositEth() / receive() accept ETH from any address but do NOT track
+//   per-depositor shares.
+// - withdraw / withdrawETH / emergencyWithdrawAll are owner-only and can
+//   move the full balance.
+// - executeArbitrage / executeArbitrageFromBalance are owner-gated on the
+//   from-balance path; the payable path spends msg.sender funds.
 //
-// This contract does NOT provide third-party depositors with any on-chain
-// guarantee of fund return. Do not use this contract to accept deposits
-// from other users unless you separately implement per-user accounting and
-// withdrawal rights, and ensure compliance with applicable regulations in
-// your jurisdiction.
+// Do not pool other people's money in this contract.
 //
-// RECOMMENDED USAGE: each user should deploy their OWN separate instance of
-// this contract and become the `owner` of that instance. In that setup, a
-// user only ever deposits and withdraws their own funds from a contract
-// they fully control — this contract must never be shared or used as a
-// single pooled contract where one owner holds funds on behalf of others.
-//
-// RECOMMENDED STARTING AMOUNT: for first-time / beginner users, it is
-// recommended to deposit and test with a small amount, around 0.5-1 ETH,
-// before committing larger sums. This helps you get familiar with
-// deposit/withdraw/arbitrage behavior and gas costs on your own deployed
-// instance before risking more capital.
+// FUNDING: any amount of ETH or allowed ERC-20. No 0.5–1 ETH minimum.
+// Keep spare ETH on the owner wallet for gas.
 // ============================================================================
 
 contract Arbitrage {
-    // ------------------------------------------------------------------
-    // Constants
-    // ------------------------------------------------------------------
     address private constant ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
     address private constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address private constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address private constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address private constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address private constant NATIVE = address(0);
 
-    // ------------------------------------------------------------------
-    // State
-    // ------------------------------------------------------------------
     address public owner;
     mapping(address => bool) private allowed;
     mapping(address => bool) private allowedRouters;
@@ -82,12 +65,11 @@ contract Arbitrage {
     address private defaultTokenOut;
     uint24 private defaultFee = 3000;
 
-    uint256 private minQuickSwapAmount = 0.1 ether;
-    uint256 private maxQuickSwapAmount = 2 ether;
+    // Any size is allowed for funding. Quick-swap rails are wide so small
+    // tests (0.001 ETH) and larger inventory both work. Owner can retune.
+    uint256 private minQuickSwapAmount = 0.001 ether;
+    uint256 private maxQuickSwapAmount = 100 ether;
 
-    // ------------------------------------------------------------------
-    // Events
-    // ------------------------------------------------------------------
     event Swapped(address indexed user, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut);
     event ArbitrageExecuted(address indexed user, uint256 legsCount, uint256 amountIn, uint256 amountOut);
     event TokenAllowedSet(address indexed token, bool allowedFlag);
@@ -100,44 +82,8 @@ contract Arbitrage {
     event DefaultFeeSet(uint24 fee);
     event MinQuickSwapAmountSet(uint256 amount);
     event MaxQuickSwapAmountSet(uint256 amount);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-
-    /**
-    * ============================================================================
-    * DESIGN NOTES (EXECUTION MODEL)
-    * ============================================================================
-    *
-    * This contract is designed as a self-custody execution module.
-    * The deployer of the contract becomes the owner and is the only
-    * intended operator of this instance.
-    *
-    * The contract is optimized for integration with external automation
-    * systems, bots, or interfaces that prepare and trigger transactions.
-    *
-    * Typical workflow:
-    * - External system analyzes market conditions
-    * - Prepared parameters are passed into executeArbitrage(...)
-    *
-    * For best results:
-    * - Use automated execution tools instead of manual interaction
-    * - Integrate with interfaces that support scheduled or triggered calls
-    * - Use Python-based automation scripts or similar backend systems
-    *   to monitor conditions and trigger execution when needed
-    *
-    * NOTE:
-    * Using an automation-enabled interface (with integrated execution tools)
-    * together with Python automation is the preferred way to operate this
-    * contract efficiently.
-    *
-    * This follows a widely used DeFi architecture pattern:
-    * off-chain coordination + on-chain execution.
-    *
-    * ============================================================================
-    */
-
-    // ------------------------------------------------------------------
-    // Modifiers
-    // ------------------------------------------------------------------
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
         _;
@@ -155,28 +101,33 @@ contract Arbitrage {
         _reentrancyLock = 1;
     }
 
-    // ------------------------------------------------------------------
-    // Constructor
-    // ------------------------------------------------------------------
     constructor() {
         owner = msg.sender;
         allowed[WETH] = true;
+        allowed[USDT] = true;
+        allowed[USDC] = true;
+        allowed[WBTC] = true;
         allowedRouters[ROUTER] = true;
-        defaultTokenOut = 0xdAC17F958D2ee523a2206206994597C13D831ec7; // USDT
-        allowed[defaultTokenOut] = true;
+        defaultTokenOut = USDT;
+        emit OwnershipTransferred(address(0), msg.sender);
     }
 
-    receive() external payable {}
+    receive() external payable {
+        emit Deposit(msg.sender, msg.value);
+    }
 
-    // ------------------------------------------------------------------
-    // Admin functions
-    // ------------------------------------------------------------------
+    function depositEth() external payable {
+        require(msg.value > 0, "Zero deposit");
+        emit Deposit(msg.sender, msg.value);
+    }
+
     function setTokenAllowed(address token, bool isAllowed) external onlyOwner {
         allowed[token] = isAllowed;
         emit TokenAllowedSet(token, isAllowed);
     }
 
     function setRouterAllowed(address router, bool isAllowed) external onlyOwner {
+        require(router != address(0), "Zero address");
         allowedRouters[router] = isAllowed;
         emit RouterAllowedSet(router, isAllowed);
     }
@@ -186,9 +137,17 @@ contract Arbitrage {
         emit PausedSet(isPaused);
     }
 
-    function withdraw(address token, address to, uint256 amount) external onlyOwner {
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Zero address");
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+
+    function withdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         require(to != address(0), "Zero address");
+        require(amount > 0, "Zero amount");
         if (token == NATIVE) {
+            require(address(this).balance >= amount, "Insufficient ETH");
             (bool success, ) = to.call{value: amount}("");
             require(success, "ETH transfer failed");
         } else {
@@ -197,6 +156,24 @@ contract Arbitrage {
         emit Withdraw(token, to, amount);
     }
 
+    function withdrawETH(address payable to, uint256 amount) external onlyOwner nonReentrant {
+        require(to != address(0), "Zero address");
+        require(amount > 0 && address(this).balance >= amount, "Bad amount");
+        (bool success, ) = to.call{value: amount}("");
+        require(success, "ETH transfer failed");
+        emit Withdraw(NATIVE, to, amount);
+    }
+
+    function emergencyWithdrawAll(address payable to) external onlyOwner nonReentrant {
+        require(to != address(0), "Zero address");
+        uint256 ethBal = address(this).balance;
+        if (ethBal > 0) {
+            (bool success, ) = to.call{value: ethBal}("");
+            require(success, "ETH transfer failed");
+            emit Withdraw(NATIVE, to, ethBal);
+        }
+        emit EmergencyWithdrawAll(to);
+    }
 
     function setDefaultTokenOut(address token) external onlyOwner {
         require(token != address(0), "Zero address");
@@ -206,23 +183,23 @@ contract Arbitrage {
     }
 
     function setDefaultFee(uint24 fee) external onlyOwner {
+        require(fee == 100 || fee == 500 || fee == 3000 || fee == 10000, "Bad fee");
         defaultFee = fee;
         emit DefaultFeeSet(fee);
     }
 
     function setMinQuickSwapAmount(uint256 amount) external onlyOwner {
+        require(amount <= maxQuickSwapAmount, "Min > max");
         minQuickSwapAmount = amount;
         emit MinQuickSwapAmountSet(amount);
     }
 
     function setMaxQuickSwapAmount(uint256 amount) external onlyOwner {
+        require(amount >= minQuickSwapAmount, "Max < min");
         maxQuickSwapAmount = amount;
         emit MaxQuickSwapAmountSet(amount);
     }
 
-    // ------------------------------------------------------------------
-    // Internal helpers
-    // ------------------------------------------------------------------
     function _safeTransfer(address token, address to, uint256 amount) internal {
         require(token != address(0) && to != address(0), "Zero address");
         (bool success, bytes memory data) = token.call(
@@ -290,9 +267,6 @@ contract Arbitrage {
         require(sent, "ETH send failed");
     }
 
-    // ------------------------------------------------------------------
-    // Swap
-    // ------------------------------------------------------------------
     function swap(
         bytes calldata path,
         bool etherIn,
@@ -303,6 +277,7 @@ contract Arbitrage {
     ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
         require(deadline >= block.timestamp, "Expired");
         require(path.length >= 43, "Invalid path");
+        require(amountIn > 0, "Zero amount");
 
         address tokenIn = _firstToken(path);
         address tokenOut = _lastToken(path);
@@ -352,9 +327,6 @@ contract Arbitrage {
         }
     }
 
-    // ------------------------------------------------------------------
-    // QuickSwap
-    // ------------------------------------------------------------------
     function quickSwap(uint256 amountOutMinimum) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
         require(msg.value >= minQuickSwapAmount, "Amount too small for quick swap");
         require(msg.value <= maxQuickSwapAmount, "Amount too large for quick swap");
@@ -374,10 +346,11 @@ contract Arbitrage {
         emit Swapped(msg.sender, WETH, defaultTokenOut, msg.value, amountOut);
     }
 
-    function quickSwapFromBalance(uint256 amountOutMinimum) external onlyOwner nonReentrant whenNotPaused returns (uint256 amountOut) {
-        uint256 amountIn = address(this).balance;
+    function quickSwapFromBalance(uint256 amountIn, uint256 amountOutMinimum) external onlyOwner nonReentrant whenNotPaused returns (uint256 amountOut) {
+        require(amountIn > 0, "Zero amount");
         require(amountIn >= minQuickSwapAmount, "Balance too small");
         require(amountIn <= maxQuickSwapAmount, "Balance too large");
+        require(amountIn <= address(this).balance, "Insufficient ETH");
         require(defaultTokenOut != address(0), "Default token not set");
 
         bytes memory path = abi.encodePacked(WETH, defaultFee, defaultTokenOut);
@@ -394,9 +367,6 @@ contract Arbitrage {
         emit Swapped(msg.sender, WETH, defaultTokenOut, amountIn, amountOut);
     }
 
-    // ------------------------------------------------------------------
-    // Arbitrage
-    // ------------------------------------------------------------------
     struct SwapLeg {
         address router;
         bytes path;
@@ -412,33 +382,83 @@ contract Arbitrage {
     ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
         require(deadline >= block.timestamp, "Expired");
         require(legs.length > 0 && legs.length <= 8, "Invalid legs count");
+        require(amountIn > 0, "Zero amount");
 
         bool isEth = msg.value > 0;
         if (isEth) {
             require(msg.value == amountIn, "Wrong msg.value");
         } else {
-            address tokenIn = legs[0].useV2 ? legs[0].v2Path[0] : _firstToken(legs[0].path);
+            require(msg.value == 0, "Unexpected ETH");
+            address tokenIn = legs[0].useV2 ? _v2First(legs[0].v2Path) : _firstToken(legs[0].path);
             _safeTransferFrom(tokenIn, msg.sender, address(this), amountIn);
         }
 
-        uint256 currentAmount = amountIn;
+        amountOut = _runLegs(legs, amountIn, isEth, deadline);
+        _payoutFinal(legs, amountOut, msg.sender);
+        emit ArbitrageExecuted(msg.sender, legs.length, amountIn, amountOut);
+    }
 
+    function executeArbitrageFromBalance(
+        SwapLeg[] calldata legs,
+        uint256 amountIn,
+        uint256 deadline
+    ) external onlyOwner nonReentrant whenNotPaused returns (uint256 amountOut) {
+        require(deadline >= block.timestamp, "Expired");
+        require(legs.length > 0 && legs.length <= 8, "Invalid legs count");
+        require(amountIn > 0, "Zero amount");
+
+        bool isEth;
+        if (legs[0].useV2) {
+            address tokenIn = _v2First(legs[0].v2Path);
+            if (tokenIn == WETH && address(this).balance >= amountIn) {
+                isEth = true;
+            } else {
+                require(_balanceOf(tokenIn, address(this)) >= amountIn, "Insufficient token");
+            }
+        } else {
+            address tokenIn = _firstToken(legs[0].path);
+            if (tokenIn == WETH && address(this).balance >= amountIn) {
+                isEth = true;
+            } else {
+                require(_balanceOf(tokenIn, address(this)) >= amountIn, "Insufficient token");
+            }
+        }
+
+        amountOut = _runLegs(legs, amountIn, isEth, deadline);
+        _payoutFinal(legs, amountOut, msg.sender);
+        emit ArbitrageExecuted(msg.sender, legs.length, amountIn, amountOut);
+    }
+
+    function _v2First(address[] calldata v2Path) internal pure returns (address) {
+        require(v2Path.length >= 2, "Bad v2 path");
+        return v2Path[0];
+    }
+
+    function _runLegs(
+        SwapLeg[] calldata legs,
+        uint256 amountIn,
+        bool isEth,
+        uint256 deadline
+    ) internal returns (uint256 currentAmount) {
+        currentAmount = amountIn;
         for (uint256 i = 0; i < legs.length; i++) {
             currentAmount = _swapLeg(legs[i], currentAmount, isEth && i == 0, deadline);
             isEth = false;
         }
+    }
 
-        amountOut = currentAmount;
-
+    function _payoutFinal(SwapLeg[] calldata legs, uint256 amountOut, address to) internal {
         SwapLeg calldata lastLeg = legs[legs.length - 1];
-        address finalToken = lastLeg.useV2 
-            ? lastLeg.v2Path[lastLeg.v2Path.length - 1] 
+        address finalToken = lastLeg.useV2
+            ? lastLeg.v2Path[lastLeg.v2Path.length - 1]
             : _lastToken(lastLeg.path);
 
         require(allowed[finalToken], "Final token not allowed");
-        _safeTransfer(finalToken, msg.sender, amountOut);
-
-        emit ArbitrageExecuted(msg.sender, legs.length, amountIn, amountOut);
+        if (finalToken == WETH) {
+            _safeTransfer(WETH, to, amountOut);
+        } else {
+            _safeTransfer(finalToken, to, amountOut);
+        }
     }
 
     function _swapLeg(
@@ -450,6 +470,7 @@ contract Arbitrage {
         require(allowedRouters[leg.router], "Router not allowed");
 
         if (leg.useV2) {
+            require(leg.v2Path.length >= 2, "Bad v2 path");
             address tokenIn = leg.v2Path[0];
             if (!etherIn) {
                 _approveIfNeeded(tokenIn, leg.router, amountIn);
@@ -495,11 +516,28 @@ contract Arbitrage {
         }
     }
 
-    // ------------------------------------------------------------------
-    // View helpers
-    // ------------------------------------------------------------------
     function getBalance(address token) external view returns (uint256) {
         return _balanceOf(token, address(this));
+    }
+
+    function getOwner() external view returns (address) {
+        return owner;
+    }
+
+    function isTokenAllowed(address token) external view returns (bool) {
+        return allowed[token];
+    }
+
+    function isRouterAllowed(address router) external view returns (bool) {
+        return allowedRouters[router];
+    }
+
+    function isPaused() external view returns (bool) {
+        return paused;
+    }
+
+    function getQuickSwapLimits() external view returns (uint256 minAmount, uint256 maxAmount) {
+        return (minQuickSwapAmount, maxQuickSwapAmount);
     }
 
     function revokeApproval(address token, address spender) external onlyOwner {
