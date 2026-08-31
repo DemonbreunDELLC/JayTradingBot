@@ -46,6 +46,11 @@ interface ISwapRouterV2 {
 //
 // FUNDING: any amount of ETH or allowed ERC-20. No 0.5–1 ETH minimum.
 // Keep spare ETH on the owner wallet for gas.
+//
+// Cards: this contract cannot take debit/credit cards. Buy ETH/USDC with a
+// card via an on-ramp (MetaMask Buy, Coinbase, MoonPay, …) into the owner
+// wallet, then transfer / depositEth() here. Never collect card numbers in
+// a bot UI. See docs/CARD_ONRAMP.md.
 // ============================================================================
 
 contract Arbitrage {
